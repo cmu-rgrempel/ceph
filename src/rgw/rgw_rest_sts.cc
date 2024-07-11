@@ -348,6 +348,12 @@ WebTokenEngine::get_cert_url(const string& iss, const DoutPrefixProvider *dpp, o
 void
 WebTokenEngine::validate_signature(const DoutPrefixProvider* dpp, const jwt::decoded_jwt& decoded, const string& algorithm, const string& iss, const vector<string>& thumbprints, optional_yield y) const
 {
+  // Fetch the key id supplied with the JWT, if any
+  string jwt_kid;
+  if (decoded.has_key_id()) {
+    jwt_kid = decoded.get_key_id();
+  }
+
   if (algorithm != "HS256" && algorithm != "HS384" && algorithm != "HS512") {
     string cert_url = get_cert_url(iss, dpp, y);
     if (cert_url.empty()) {
@@ -371,32 +377,53 @@ WebTokenEngine::validate_signature(const DoutPrefixProvider* dpp, const jwt::dec
 
     JSONParser parser;
     if (parser.parse(cert_resp.c_str(), cert_resp.length())) {
-      JSONObj::data_val val;
-      if (parser.get_data("keys", &val)) {
-        if (val.str[0] == '[') {
-          val.str.erase(0, 1);
+      JSONObj *keys_obj = parser.find_obj("keys");
+      if (!keys_obj) {
+        ldpp_dout(dpp, 0) << "No keys found" << dendl;
+        throw -EINVAL;
+      }
+
+      auto keys_data = keys_obj->get_data();
+      JSONParser keys_parser;
+      if (!keys_parser.parse(keys_data.c_str(), keys_data.length())) {
+        ldpp_dout(dpp, 0) << "Keys failed to parse" << dendl;
+        throw -EINVAL;
+      }
+
+      vector<string> keys = keys_parser.get_array_elements();
+      for (auto each_key : keys) {
+        JSONParser key_parser;
+        if (!key_parser.parse(each_key.c_str(), each_key.length())) {
+          ldpp_dout(dpp, 0) << "Error parsing JSON for key" << dendl;
+          continue;
         }
-        if (val.str[val.str.size() - 1] == ']') {
-          val.str = val.str.erase(val.str.size() - 1, 1);
-        }
-        if (parser.parse(val.str.c_str(), val.str.size())) {
-          vector<string> x5c;
-          if (JSONDecoder::decode_json("x5c", x5c, &parser)) {
-            string cert;
-            bool found_valid_cert = false;
-            for (auto& it : x5c) {
-              cert = "-----BEGIN CERTIFICATE-----\n" + it + "\n-----END CERTIFICATE-----";
-              ldpp_dout(dpp, 20) << "Certificate is: " << cert.c_str() << dendl;
-              if (is_cert_valid(thumbprints, cert)) {
-               found_valid_cert = true;
-               break;
+
+        // Get this certificate's key id, if it has one
+        string key_kid;
+        JSONDecoder::decode_json("kid", key_kid, &key_parser);
+
+        vector<string> key_cert;
+        if (JSONDecoder::decode_json("x5c", key_cert, &key_parser)) {
+          for (auto each_cert : key_cert) {
+            string cert = "-----BEGIN CERTIFICATE-----\n" + each_cert + "\n-----END CERTIFICATE-----";
+            ldpp_dout(dpp, 20) << "Certificate is: " << cert.c_str() << dendl;
+
+            if (jwt_kid != "" && key_kid != "") {
+              // If the jwt supplied a kid, and so did the jwks, then
+              // we make sure that they match.
+              if (jwt_kid != key_kid) {
+                ldpp_dout(dpp, 20) << "jwt_kid: " << jwt_kid << " does not match key_kid: " << key_kid << dendl;
+                continue;
               }
-              found_valid_cert = true;
+            } else {
+              // If either the jwt or the jwks had no kid, then we
+              // check the certificate against the registered thumbprints.
+              if (!is_cert_valid(thumbprints, cert)) {
+                ldpp_dout(dpp, 0) << "Cert doesn't match with the thumbprints registered with oidc provider: " << cert.c_str() << dendl;
+                continue;
+              }
             }
-            if (! found_valid_cert) {
-              ldpp_dout(dpp, 0) << "Cert doesn't match that with the thumbprints registered with oidc provider: " << cert.c_str() << dendl;
-              throw -EINVAL;
-            }
+
             try {
               //verify method takes care of expired tokens also
               if (algorithm == "RS256") {
@@ -404,67 +431,78 @@ WebTokenEngine::validate_signature(const DoutPrefixProvider* dpp, const jwt::dec
                             .allow_algorithm(jwt::algorithm::rs256{cert});
 
                 verifier.verify(decoded);
+                // If we verify without an exception, we're done
+                return;
               } else if (algorithm == "RS384") {
                 auto verifier = jwt::verify()
                             .allow_algorithm(jwt::algorithm::rs384{cert});
 
                 verifier.verify(decoded);
+                // If we verify without an exception, we're done
+                return;
               } else if (algorithm == "RS512") {
                 auto verifier = jwt::verify()
                             .allow_algorithm(jwt::algorithm::rs512{cert});
 
                 verifier.verify(decoded);
+                // If we verify without an exception, we're done
+                return;
               } else if (algorithm == "ES256") {
                 auto verifier = jwt::verify()
                             .allow_algorithm(jwt::algorithm::es256{cert});
 
                 verifier.verify(decoded);
+                // If we verify without an exception, we're done
+                return;
               } else if (algorithm == "ES384") {
                 auto verifier = jwt::verify()
                             .allow_algorithm(jwt::algorithm::es384{cert});
 
                 verifier.verify(decoded);
+                // If we verify without an exception, we're done
+                return;
               } else if (algorithm == "ES512") {
                 auto verifier = jwt::verify()
                               .allow_algorithm(jwt::algorithm::es512{cert});
 
                 verifier.verify(decoded);
+                // If we verify without an exception, we're done
+                return;
               } else if (algorithm == "PS256") {
                 auto verifier = jwt::verify()
                               .allow_algorithm(jwt::algorithm::ps256{cert});
 
                 verifier.verify(decoded);
+                // If we verify without an exception, we're done
+                return;
               } else if (algorithm == "PS384") {
                 auto verifier = jwt::verify()
                               .allow_algorithm(jwt::algorithm::ps384{cert});
 
                 verifier.verify(decoded);
+                // If we verify without an exception, we're done
+                return;
               } else if (algorithm == "PS512") {
                 auto verifier = jwt::verify()
                               .allow_algorithm(jwt::algorithm::ps512{cert});
 
                 verifier.verify(decoded);
+                // If we verify without an exception, we're done
+                return;
+              } else {
+                ldpp_dout(dpp, 0) << "Unexpected algorithm: " << algorithm << dendl;
               }
             } catch (std::runtime_error& e) {
               ldpp_dout(dpp, 0) << "Signature validation failed: " << e.what() << dendl;
-              throw;
             }
             catch (...) {
               ldpp_dout(dpp, 0) << "Signature validation failed" << dendl;
-              throw;
             }
-          } else {
-            ldpp_dout(dpp, 0) << "x5c not present" << dendl;
-            throw -EINVAL;
           }
         } else {
-          ldpp_dout(dpp, 0) << "Malformed JSON object for keys" << dendl;
-          throw -EINVAL;
+	  ldpp_dout(dpp, 0) << "x5c not present" << dendl;
         }
-      } else {
-        ldpp_dout(dpp, 0) << "keys not present in JSON" << dendl;
-        throw -EINVAL;
-      } //if-else get-data
+      }
     } else {
       ldpp_dout(dpp, 0) << "Malformed json returned while fetching cert" << dendl;
       throw -EINVAL;
@@ -473,6 +511,11 @@ WebTokenEngine::validate_signature(const DoutPrefixProvider* dpp, const jwt::dec
     ldpp_dout(dpp, 0) << "JWT signed by HMAC algos are currently not supported" << dendl;
     throw -EINVAL;
   }
+
+  // We would fall through to here if none of the certificates validated
+  // the JWT, so we make sure to throw the expected error in that case.
+  ldpp_dout(dpp, 0) << "No certificate validated the JWT" << dendl;
+  throw -EINVAL;
 }
 
 WebTokenEngine::result_t
