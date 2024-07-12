@@ -377,16 +377,15 @@ WebTokenEngine::validate_signature(const DoutPrefixProvider* dpp, const jwt::dec
 
     JSONParser parser;
     if (parser.parse(cert_resp.c_str(), cert_resp.length())) {
-      JSONObj *keys_obj = parser.find_obj("keys");
-      if (!keys_obj) {
-        ldpp_dout(dpp, 0) << "No keys found" << dendl;
+      JSONObj::data_val val;
+      if (!parser.get_data("keys", &val)) {
+        ldpp_dout(dpp, 0) << "keys not present in JSON" << dendl;
         throw -EINVAL;
       }
 
-      auto keys_data = keys_obj->get_data();
       JSONParser keys_parser;
-      if (!keys_parser.parse(keys_data.c_str(), keys_data.length())) {
-        ldpp_dout(dpp, 0) << "Keys failed to parse" << dendl;
+      if (!keys_parser.parse(val.str.c_str(), val.str.size())) {
+        ldpp_dout(dpp, 0) << "Malformed JSON object for keys" << dendl;
         throw -EINVAL;
       }
 
