@@ -492,7 +492,7 @@ WebTokenEngine::validate_signature(const DoutPrefixProvider* dpp, const jwt::dec
             }
           }
         } else {
-	  ldpp_dout(dpp, 0) << "x5c not present" << dendl;
+          ldpp_dout(dpp, 0) << "x5c not present" << dendl;
         }
       }
     } else {
