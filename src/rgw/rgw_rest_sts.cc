@@ -383,7 +383,7 @@ WebTokenEngine::validate_signature(const DoutPrefixProvider* dpp, const jwt::dec
       }
 
       vector<string> keys = keys_parser.get_array_elements();
-      for (auto each_key : keys) {
+      for (auto& each_key : keys) {
         JSONParser key_parser;
         if (!key_parser.parse(each_key.c_str(), each_key.length())) {
           ldpp_dout(dpp, 0) << "Error parsing JSON for key" << dendl;
@@ -396,7 +396,7 @@ WebTokenEngine::validate_signature(const DoutPrefixProvider* dpp, const jwt::dec
 
         vector<string> key_cert;
         if (JSONDecoder::decode_json("x5c", key_cert, &key_parser)) {
-          for (auto each_cert : key_cert) {
+          for (auto& each_cert : key_cert) {
             string cert = "-----BEGIN CERTIFICATE-----\n" + each_cert + "\n-----END CERTIFICATE-----";
             ldpp_dout(dpp, 20) << "Certificate is: " << cert.c_str() << dendl;
 
